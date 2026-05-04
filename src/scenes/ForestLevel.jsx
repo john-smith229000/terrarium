@@ -12,13 +12,12 @@ const FORAGEABLES = [
   { id: 'shroom', z: -7,  xWorld: 16,  icon: '🍄', name: 'Tiny Mushroom', color: '#fb923c', statEffect: { moisture: +8, light: -8 } },
 ];
 
-// World bounds in X (camera/player travel range)
 const X_MIN = -16;
 const X_MAX = 22;
 const WALK_SPEED = 6;
-const COLLECT_DIST = 2.5; // world-X distance to trigger collect prompt
+const COLLECT_DIST = 2.5;
 
-// Trees distributed across the world
+// Fewer segments = more PS1 faceted look
 const TREES = [
   ...[...Array(12)].map((_, i) => ({ x: -18 + i * 5 + Math.sin(i * 1.7) * 1.5, z: -12, scale: 1.4, shade: '#0a1c07' })),
   ...[...Array(14)].map((_, i) => ({ x: -18 + i * 4.5 + Math.cos(i * 2.1) * 1,  z: -7,  scale: 1.0, shade: '#0f2a0b' })),
@@ -33,9 +32,7 @@ function ForageableItem({ item, cameraX, onCollect }) {
 
   useFrame(({ clock }) => {
     if (!meshRef.current || collected) return;
-    // Bob gently
     meshRef.current.position.y = 0.25 + Math.sin(clock.elapsedTime * 1.8 + item.xWorld) * 0.06;
-    // Check proximity to camera (= player position in this first-person setup)
     const dist = Math.abs(cameraX.current - item.xWorld);
     const isNear = dist < COLLECT_DIST;
     if (isNear !== nearRef.current) {
@@ -49,11 +46,13 @@ function ForageableItem({ item, cameraX, onCollect }) {
   return (
     <group position={[item.xWorld, 0, item.z]}>
       <mesh ref={meshRef} position={[0, 0.25, 0]}>
+        {/* 4-sided = very PS1 chunky */}
         <boxGeometry args={[0.3, 0.3, 0.3]} />
         <meshStandardMaterial
           color={item.color}
           emissive={item.color}
           emissiveIntensity={near ? 0.5 : 0.1}
+          flatShading
         />
       </mesh>
       {near && (
@@ -79,10 +78,9 @@ function ForageableItem({ item, cameraX, onCollect }) {
 }
 
 export default function ForestLevel() {
-  // In first-person the camera IS the player — we track its X position
   const cameraXRef = useRef(0);
   const { addToInventory } = useGameStore();
-  const keys = { current: forestKeys }; // shared with App.jsx UI buttons
+  const keys = { current: forestKeys };
   const actionConsumed = useRef(false);
   const [items, setItems] = useState(() => FORAGEABLES.map(f => ({ ...f })));
 
@@ -108,7 +106,6 @@ export default function ForestLevel() {
     return () => {
       window.removeEventListener('keydown', onDown);
       window.removeEventListener('keyup', onUp);
-      // Reset all keys on unmount so stale presses don't bleed into other scenes
       forestKeys.left = false;
       forestKeys.right = false;
       forestKeys.action = false;
@@ -116,17 +113,14 @@ export default function ForestLevel() {
   }, []);
 
   useFrame(({ camera }, delta) => {
-    // Clamp and move — never touch rotation or call lookAt (causes NaN / white screen)
     if (keys.current.left)  cameraXRef.current -= WALK_SPEED * delta;
     if (keys.current.right) cameraXRef.current += WALK_SPEED * delta;
     cameraXRef.current = Math.max(X_MIN, Math.min(X_MAX, cameraXRef.current));
 
-    // Apply to camera position only — rotation is fixed by the Camera component
     camera.position.x = cameraXRef.current;
     camera.position.y = 1.65;
     camera.position.z = 0;
 
-    // Collect action
     if (keys.current.action && !actionConsumed.current) {
       items.forEach(item => {
         const dist = Math.abs(cameraXRef.current - item.xWorld);
@@ -140,44 +134,37 @@ export default function ForestLevel() {
 
   return (
     <>
-      {/* Camera — makeDefault resets properly each time this scene mounts */}
       <PerspectiveCamera makeDefault position={[0, 1.65, 0]} fov={75} near={0.1} far={200} />
 
-      {/* Lighting — warm dappled forest feel */}
       <ambientLight intensity={0.55} color="#b8d4a0" />
       <directionalLight position={[5, 12, -4]} intensity={0.7} color="#e8f5c8" castShadow />
       <directionalLight position={[-8, 6, 2]}  intensity={0.2} color="#4ade80" />
       <fogExp2 attach="fog" color="#0a1a07" density={0.032} />
 
-      {/* Sky */}
-      <mesh position={[0, 0, -40]}>
-        <planeGeometry args={[400, 80]} />
-        <meshBasicMaterial color="#05120300" />
+      {/* Ground */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[3, 0, -6]} receiveShadow>
+        <planeGeometry args={[80, 30, 4, 4]} />
+        <meshStandardMaterial color="#1a3510" roughness={1} flatShading />
       </mesh>
 
-      {/* Ground — long strip */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[3, 0, -6]} receiveShadow>
-        <planeGeometry args={[80, 30]} />
-        <meshStandardMaterial color="#1a3510" roughness={1} />
-      </mesh>
-      {/* Ground texture bumps */}
+      {/* Ground bumps — low-poly circles */}
       {[...Array(30)].map((_, i) => (
         <mesh key={`g${i}`} rotation={[-Math.PI/2,0,0]} position={[-15 + i*2.5 + Math.sin(i)*0.8, 0.01, -4 + Math.cos(i*1.3)*2]}>
-          <circleGeometry args={[0.3 + Math.random()*0.3, 6]} />
+          <circleGeometry args={[0.3 + (i%3)*0.15, 5]} />
           <meshBasicMaterial color={i%3===0 ? '#1e3f12' : '#152d0e'} />
         </mesh>
       ))}
 
-      {/* Layered trees */}
+      {/* Trees — 5-segment cones for that PS1 look */}
       {TREES.map((t, i) => (
         <group key={i} position={[t.x, 0, t.z]}>
           <mesh position={[0, t.scale * 2.5, 0]}>
-            <coneGeometry args={[t.scale * 0.9, t.scale * 4, 7]} />
-            <meshStandardMaterial color={t.shade} roughness={1} />
+            <coneGeometry args={[t.scale * 0.9, t.scale * 4, 5]} />
+            <meshStandardMaterial color={t.shade} roughness={1} flatShading />
           </mesh>
           <mesh position={[0, t.scale * 0.5, 0]}>
-            <cylinderGeometry args={[t.scale * 0.12, t.scale * 0.15, t.scale * 1.2, 6]} />
-            <meshStandardMaterial color="#2a1204" roughness={1} />
+            <cylinderGeometry args={[t.scale * 0.12, t.scale * 0.15, t.scale * 1.2, 4]} />
+            <meshStandardMaterial color="#2a1204" roughness={1} flatShading />
           </mesh>
         </group>
       ))}
@@ -186,7 +173,7 @@ export default function ForestLevel() {
       {[...Array(20)].map((_, i) => (
         <mesh key={`grass${i}`} position={[-10 + i*2.2, 0.3, -1.5 + Math.sin(i)*0.5]}>
           <boxGeometry args={[0.06, 0.6, 0.06]} />
-          <meshStandardMaterial color="#2d5518" roughness={1} />
+          <meshStandardMaterial color="#2d5518" roughness={1} flatShading />
         </mesh>
       ))}
 
@@ -194,7 +181,6 @@ export default function ForestLevel() {
       {items.map(item => (
         <ForageableItem key={item.id} item={item} cameraX={cameraXRef} onCollect={handleCollect} />
       ))}
-
     </>
   );
 }

@@ -3,6 +3,7 @@ import { useGameStore, forestKeys } from './store/useGameStore';
 import DeskTerrarium from './scenes/DeskTerrarium';
 import ForestLevel from './scenes/ForestLevel';
 import { MainMenuUI } from './scenes/MainMenu';
+import { PS1Effect } from './PS1Effect';
 
 function StatBar({ label, icon, value, color }) {
   return (
@@ -169,11 +170,22 @@ export default function App() {
         </>
       )}
 
-      {/* ── Single persistent Canvas — never unmounts between forest/terrarium ── */}
-      {/* Visibility hidden when on menu so it doesn't interfere */}
+      {/* ── Single persistent Canvas ── */}
       <div style={{ position: 'absolute', inset: 0, zIndex: 0, visibility: isMenu ? 'hidden' : 'visible' }}>
-        <Canvas gl={{ antialias: true }} shadows>
+        {/*
+          imageRendering: pixelated ensures the browser doesn't smooth the
+          low-res canvas back out when it's displayed at full size
+        */}
+        <Canvas
+          gl={{ antialias: false, alpha: false }}
+          shadows
+          style={{ imageRendering: 'pixelated' }}
+        >
           <color attach="background" args={['#060d04']} />
+
+          {/* PS1 low-res render pass — renders scene at ~15% res then upscales */}
+          {!isMenu && <PS1Effect resolution={0.25} />}
+
           {currentScene === 'terrarium' && <DeskTerrarium />}
           {currentScene === 'forest'    && <ForestLevel />}
         </Canvas>
