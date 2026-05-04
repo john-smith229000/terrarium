@@ -5,38 +5,68 @@ import * as THREE from 'three';
 import { useGameStore } from '../store/useGameStore';
 
 useGLTF.preload('/mason_jar.glb');
+useGLTF.preload('/mason_jar_lid.glb');
 
-function MasonJar({ children }) {
-  const { scene } = useGLTF('/mason_jar.glb');
+const glassMaterial = new THREE.MeshStandardMaterial({
+  color: new THREE.Color('#d4ede8'),
+  transparent: true,
+  opacity: 0.13,
+  roughness: 0.08,
+  metalness: 0.15,
+  side: THREE.FrontSide,
+  depthWrite: true,
+});
+
+const lidMaterial = new THREE.MeshStandardMaterial({
+  color: new THREE.Color('#b5c4b1'),  // aged zinc/metal colour
+  roughness: 0.55,
+  metalness: 0.75,
+  flatShading: true,
+});
+
+function applyMaterial(scene, mat) {
+  scene.traverse((child) => {
+    if (child.isMesh) {
+      child.material = mat;
+      child.castShadow = false;
+    }
+  });
+}
+
+function fitScene(scene, targetSize = 3.0) {
+  const box = new THREE.Box3().setFromObject(scene);
+  const size = new THREE.Vector3();
+  box.getSize(size);
+  const maxDim = Math.max(size.x, size.y, size.z);
+  const s = targetSize / maxDim;
+  return { fitScale: s, yOffset: -box.min.y * s };
+}
+
+function MasonJar({ lidOn, children }) {
+  const { scene: jarScene } = useGLTF('/mason_jar.glb');
+  const { scene: lidScene } = useGLTF('/mason_jar_lid.glb');
   const jarRef = useRef();
 
-  // Auto-fit: scale to ~6 units tall (3x the original 2)
-  const { fitScale, yOffset } = useMemo(() => {
-    const box = new THREE.Box3().setFromObject(scene);
+  const { fitScale, yOffset } = useMemo(() => fitScene(jarScene, 3.0), [jarScene]);
+
+  // Lid: fit to same scale, position on top of jar
+  const { fitScale: lidScale, yOffset: lidYOffset, lidTopY } = useMemo(() => {
+    const { fitScale: ls, yOffset: ly } = fitScene(lidScene, 3.0);
+    // measure lid height to know how tall it is
+    const box = new THREE.Box3().setFromObject(lidScene);
     const size = new THREE.Vector3();
     box.getSize(size);
-    const maxDim = Math.max(size.x, size.y, size.z);
-    const s = 3.0 / maxDim;
-    return { fitScale: s, yOffset: -box.min.y * s };
-  }, [scene]);
+    return { fitScale: ls, yOffset: ly, lidHeight: size.y * ls };
+  }, [lidScene]);
 
-  // Glass material with transmission for real transparency
-  useEffect(() => {
-    scene.traverse((child) => {
-      if (child.isMesh) {
-        child.material = new THREE.MeshStandardMaterial({
-          color: new THREE.Color('#a8d4c8'),
-          transparent: true,
-          opacity: 0.18,
-          roughness: 0.05,
-          metalness: 0.3,
-          side: THREE.FrontSide,
-          depthWrite: true,
-        });
-        child.castShadow = false;
-      }
-    });
-  }, [scene]);
+  useEffect(() => { applyMaterial(jarScene, glassMaterial); }, [jarScene]);
+  useEffect(() => { applyMaterial(lidScene, lidMaterial); }, [lidScene]);
+
+  // Measure jar top so we can sit the lid right on it
+  const jarTopY = useMemo(() => {
+    const box = new THREE.Box3().setFromObject(jarScene);
+    return box.max.y * fitScale;
+  }, [jarScene, fitScale]);
 
   useFrame(({ clock }) => {
     if (jarRef.current) {
@@ -46,12 +76,25 @@ function MasonJar({ children }) {
 
   return (
     <group ref={jarRef} position={[0, -1.0, 0]}>
-      <primitive object={scene} scale={fitScale} position={[0, yOffset, 0]} />
-      {/* Soil layer — tweak y to sit inside the jar mouth */}
-      <mesh position={[0, 0.3, 0]}>
+      {/* Jar body */}
+      <primitive object={jarScene} scale={fitScale} position={[0, yOffset, 0]} />
+
+      {/* Lid — only render when toggled on */}
+      {lidOn && (
+        <primitive
+          object={lidScene}
+          scale={fitScale * 0.80}
+          rotation={[Math.PI / 2, 0, 0]}
+          position={[0, jarTopY + 2.55, 0]}
+        />
+      )}
+
+      {/* Soil */}
+      <mesh position={[0, 0.15, 0]}>
         <cylinderGeometry args={[0.80, 0.80, 0.18, 8]} />
         <meshStandardMaterial color="#3d2409" roughness={1} flatShading />
       </mesh>
+
       {children}
     </group>
   );
@@ -65,9 +108,7 @@ function TerrariumItem({ item, index, total }) {
   const z = Math.sin(angle) * radius;
 
   useFrame(({ clock }) => {
-    if (ref.current) {
-      ref.current.rotation.y = clock.elapsedTime * 0.4 + angle;
-    }
+    if (ref.current) ref.current.rotation.y = clock.elapsedTime * 0.4 + angle;
   });
 
   const colorMap = {
@@ -90,6 +131,7 @@ function TerrariumItem({ item, index, total }) {
 export default function DeskTerrarium() {
   const { inventory, terrariumItems, terrariumStats, placeItemInTerrarium } = useGameStore();
   const [hoverItem, setHoverItem] = useState(null);
+  const [lidOn, setLidOn] = useState(false);
   const lightGlow = terrariumStats.light / 100;
 
   return (
@@ -98,7 +140,6 @@ export default function DeskTerrarium() {
       <directionalLight position={[5, 5, 5]} intensity={0.8 + lightGlow * 0.5} castShadow />
       <pointLight position={[0, 2, 0]} intensity={lightGlow * 1.2} color="#ffe8a0" distance={5} />
       <Environment preset="dawn" environmentRotation={[0, Math.PI * 0.75, 0]} />
-
 
       {/* Desk surface */}
       <mesh position={[0, -1.1, 0]} receiveShadow>
@@ -114,8 +155,30 @@ export default function DeskTerrarium() {
         </mesh>
       ))}
 
-      {/* Mason jar from GLB — auto-fitted to scene */}
-      <MasonJar>
+      {/* Lid toggle button — sits in the HUD via Html */}
+      <Html position={[0, 3.2, 0]} center>
+        <button
+          onClick={() => setLidOn(v => !v)}
+          style={{
+            padding: '5px 14px',
+            background: lidOn ? 'rgba(134,239,172,0.15)' : 'rgba(5,12,4,0.7)',
+            color: lidOn ? '#86efac' : 'rgba(134,239,172,0.5)',
+            border: `1px solid ${lidOn ? 'rgba(74,222,128,0.4)' : 'rgba(74,222,128,0.15)'}`,
+            borderRadius: 6,
+            fontFamily: '"Courier New", monospace',
+            fontSize: 11,
+            cursor: 'pointer',
+            letterSpacing: '0.1em',
+            whiteSpace: 'nowrap',
+            backdropFilter: 'blur(4px)',
+          }}
+        >
+          {lidOn ? '🫙 Remove Lid' : '🫙 Put On Lid'}
+        </button>
+      </Html>
+
+      {/* Mason jar */}
+      <MasonJar lidOn={lidOn}>
         {terrariumItems.map((item, i) => (
           <TerrariumItem key={item.placedAt} item={item} index={i} total={terrariumItems.length} />
         ))}
