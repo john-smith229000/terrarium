@@ -1,11 +1,15 @@
-import { useRef, useState, useEffect, useMemo } from 'react';
+import { useRef, useState, useEffect, useMemo, useCallback } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { OrbitControls, Environment, Html, useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
-import { useGameStore } from '../store/useGameStore';
+import { useGameStore, getTimeOfDayLighting } from '../store/useGameStore';
 
 useGLTF.preload('/mason_jar.glb');
 useGLTF.preload('/mason_jar_lid.glb');
+useGLTF.preload('/desk.glb');
+useGLTF.preload('/mushroom.glb');
+useGLTF.preload('/isopod.glb');
+
 
 const glassMaterial = new THREE.MeshStandardMaterial({
   color: new THREE.Color('#d4ede8'),
@@ -18,7 +22,7 @@ const glassMaterial = new THREE.MeshStandardMaterial({
 });
 
 const lidMaterial = new THREE.MeshStandardMaterial({
-  color: new THREE.Color('#b5c4b1'),  // aged zinc/metal colour
+  color: new THREE.Color('#b5c4b1'),
   roughness: 0.55,
   metalness: 0.75,
   flatShading: true,
@@ -42,6 +46,130 @@ function fitScene(scene, targetSize = 3.0) {
   return { fitScale: s, yOffset: -box.min.y * s };
 }
 
+// ─── Spore / dust-mote particle system ────────────────────────────────────
+
+const PARTICLE_COUNT = 60;
+
+function TerrariumParticles({ active }) {
+  const meshRef = useRef();
+  const positions = useMemo(() => {
+    const arr = new Float32Array(PARTICLE_COUNT * 3);
+    for (let i = 0; i < PARTICLE_COUNT; i++) {
+      arr[i * 3]     = (Math.random() - 0.5) * 1.2;
+      arr[i * 3 + 1] = Math.random() * 2.2 - 0.2;
+      arr[i * 3 + 2] = (Math.random() - 0.5) * 1.2;
+    }
+    return arr;
+  }, []);
+
+  // Per-particle phase offsets so they don't all move in sync
+  const phases = useMemo(() =>
+    Float32Array.from({ length: PARTICLE_COUNT }, () => Math.random() * Math.PI * 2), []);
+  const speeds = useMemo(() =>
+    Float32Array.from({ length: PARTICLE_COUNT }, () => 0.04 + Math.random() * 0.06), []);
+
+  // Working copy we mutate each frame
+  const pos = useMemo(() => positions.slice(), [positions]);
+
+  useFrame(({ clock }) => {
+    if (!meshRef.current || !active) return;
+    const t = clock.elapsedTime;
+    for (let i = 0; i < PARTICLE_COUNT; i++) {
+      const ph = phases[i];
+      // Drift upward, wander sideways
+      pos[i * 3]     = positions[i * 3]     + Math.sin(t * 0.4 + ph) * 0.18;
+      pos[i * 3 + 1] = ((positions[i * 3 + 1] + t * speeds[i]) % 2.4) - 0.2;
+      pos[i * 3 + 2] = positions[i * 3 + 2] + Math.cos(t * 0.3 + ph) * 0.18;
+    }
+    meshRef.current.geometry.attributes.position.array.set(pos);
+    meshRef.current.geometry.attributes.position.needsUpdate = true;
+  });
+
+  return (
+    <points ref={meshRef} renderOrder={10}>
+      <bufferGeometry>
+        <bufferAttribute
+          attach="attributes-position"
+          args={[positions, 3]}
+          count={PARTICLE_COUNT}
+          itemSize={3}
+        />
+      </bufferGeometry>
+      <pointsMaterial
+        color="#c8ffd4"
+        size={0.028}
+        transparent
+        opacity={0.55}
+        depthWrite={false}
+        sizeAttenuation
+      />
+    </points>
+  );
+}
+
+// ─── Pill bug critter ──────────────────────────────────────────────────────
+
+function PillBug() {
+  const { scene } = useGLTF('/isopod.glb');
+  const groupRef = useRef();
+  const stateRef = useRef({
+    x: 0,
+    z: 0,
+    angle: Math.random() * Math.PI * 2,
+    nextTurn: 0,
+  });
+
+  useEffect(() => {
+    const box = new THREE.Box3().setFromObject(scene);
+    const center = new THREE.Vector3();
+    box.getCenter(center);
+    scene.position.sub(center);
+  }, [scene]);
+
+  useFrame(({ clock }) => {
+    if (!groupRef.current) return;
+    const t = clock.elapsedTime;
+    const s = stateRef.current;
+
+    if (t > s.nextTurn) {
+      s.angle += (Math.random() - 0.5) * 0.5;
+      s.nextTurn = t + 3 + Math.random() * 4;
+    }
+
+    const speed = 0.004;
+    const RADIUS = 0.7;
+    const dist = Math.sqrt(s.x * s.x + s.z * s.z);
+
+    if (dist > RADIUS * 0.7) {
+      const toCenter = Math.atan2(-s.z, -s.x);
+      let diff = toCenter - s.angle;
+      while (diff > Math.PI) diff -= Math.PI * 2;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+      s.angle += diff * 0.02;
+    }
+
+    s.x += Math.cos(s.angle) * speed;
+    s.z += Math.sin(s.angle) * speed;
+
+    groupRef.current.position.set(s.x, -0.47, s.z);
+    groupRef.current.rotation.y = s.angle;
+    groupRef.current.position.y = -0.47 + Math.abs(Math.sin(t * 6)) * 0.008;
+  });
+
+  return (
+    <group ref={groupRef}>
+      <primitive object={scene} scale={0.002} rotation={[-Math.PI / 2, 0, 0]} />
+    </group>
+  );
+}
+
+// ─── Mason jar ────────────────────────────────────────────────────────────
+
+function Desk() {
+  const { scene } = useGLTF('/desk.glb');
+  return <primitive object={scene} scale={5} position={[0, -5.2, 0]} />;
+}
+
 function MasonJar({ lidOn, children }) {
   const { scene: jarScene } = useGLTF('/mason_jar.glb');
   const { scene: lidScene } = useGLTF('/mason_jar_lid.glb');
@@ -49,10 +177,8 @@ function MasonJar({ lidOn, children }) {
 
   const { fitScale, yOffset } = useMemo(() => fitScene(jarScene, 3.0), [jarScene]);
 
-  // Lid: fit to same scale, position on top of jar
-  const { fitScale: lidScale, yOffset: lidYOffset, lidTopY } = useMemo(() => {
+  const { fitScale: lidScale, yOffset: lidYOffset, lidHeight } = useMemo(() => {
     const { fitScale: ls, yOffset: ly } = fitScene(lidScene, 3.0);
-    // measure lid height to know how tall it is
     const box = new THREE.Box3().setFromObject(lidScene);
     const size = new THREE.Vector3();
     box.getSize(size);
@@ -62,7 +188,6 @@ function MasonJar({ lidOn, children }) {
   useEffect(() => { applyMaterial(jarScene, glassMaterial); }, [jarScene]);
   useEffect(() => { applyMaterial(lidScene, lidMaterial); }, [lidScene]);
 
-  // Measure jar top so we can sit the lid right on it
   const jarTopY = useMemo(() => {
     const box = new THREE.Box3().setFromObject(jarScene);
     return box.max.y * fitScale;
@@ -76,10 +201,8 @@ function MasonJar({ lidOn, children }) {
 
   return (
     <group ref={jarRef} position={[0, -1.0, 0]}>
-      {/* Jar body */}
       <primitive object={jarScene} scale={fitScale} position={[0, yOffset, 0]} />
 
-      {/* Lid — only render when toggled on */}
       {lidOn && (
         <primitive
           object={lidScene}
@@ -95,10 +218,38 @@ function MasonJar({ lidOn, children }) {
         <meshStandardMaterial color="#3d2409" roughness={1} flatShading />
       </mesh>
 
+      {/* Critter roams on the soil */}
+      <PillBug />
+
+      {/* Spore particles inside jar */}
+      <TerrariumParticles active />
+
       {children}
     </group>
   );
 }
+
+function DeskBook({ position, rotation }) {
+  const { scene } = useGLTF('/book.glb');
+  const clone = useMemo(() => scene.clone(true), [scene]);
+  return (
+    <group position={position} rotation={rotation}>
+      <primitive object={clone} scale={4.0} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.8, 0]} />
+    </group>
+  );
+}
+
+function MushroomModel({ position, growthScale }) {
+  const { scene } = useGLTF('/mushroom.glb');
+  const clone = useMemo(() => scene.clone(true), [scene]);
+  return (
+    <group position={position} scale={[growthScale, growthScale, growthScale]}>
+      <primitive object={clone} scale={0.25} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.8, 0]} />
+    </group>
+  );
+}
+
+// ─── Terrarium item with growth animation ─────────────────────────────────
 
 function TerrariumItem({ item, index, total }) {
   const ref = useRef();
@@ -106,10 +257,29 @@ function TerrariumItem({ item, index, total }) {
   const radius = Math.min(0.28, 0.08 * total);
   const x = Math.cos(angle) * radius;
   const z = Math.sin(angle) * radius;
+  const position = [x, -0.6 + index * 0.18, z];
+
+  // Growth: items scale from 0.3 → 1.0 over the first 5 real minutes
+  const GROW_DURATION_MS = 5 * 60 * 1000;
+  const age = Date.now() - (item.placedAt || Date.now());
+  const growthScale = Math.min(1, 0.3 + (age / GROW_DURATION_MS) * 0.7);
+
+  // Continuously update scale so it actually grows while in view
+  useFrame(() => {
+    if (!ref.current) return;
+    const currentAge = Date.now() - (item.placedAt || Date.now());
+    const s = Math.min(1, 0.3 + (currentAge / GROW_DURATION_MS) * 0.7);
+    ref.current.scale.setScalar(s);
+  });
 
   useFrame(({ clock }) => {
     if (ref.current) ref.current.rotation.y = clock.elapsedTime * 0.4 + angle;
   });
+
+  const isShroom = item.id.startsWith('shroom');
+  if (isShroom) {
+    return <MushroomModel position={position} growthScale={growthScale} />;
+  }
 
   const colorMap = {
     '🌿': '#4ade80', '🌱': '#22c55e', '🪲': '#a78bfa',
@@ -118,7 +288,7 @@ function TerrariumItem({ item, index, total }) {
   const color = colorMap[item.icon] || '#ffffff';
 
   return (
-    <mesh ref={ref} position={[x, -0.6 + index * 0.18, z]}>
+    <mesh ref={ref} position={position} scale={growthScale}>
       <sphereGeometry args={[0.09, 4, 4]} />
       <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.3} flatShading />
       <Html position={[0, 0.18, 0]} center>
@@ -128,34 +298,58 @@ function TerrariumItem({ item, index, total }) {
   );
 }
 
-export default function DeskTerrarium() {
-  const { inventory, terrariumItems, terrariumStats, placeItemInTerrarium } = useGameStore();
-  const [hoverItem, setHoverItem] = useState(null);
-  const [lidOn, setLidOn] = useState(false);
-  const lightGlow = terrariumStats.light / 100;
+// ─── Time-driven lights ───────────────────────────────────────────────────
+
+function TimeLights() {
+  const ambRef = useRef();
+  const dirRef = useRef();
+  const ptRef  = useRef();
+  const { timeOfDay, terrariumStats } = useGameStore();
+
+  useFrame(() => {
+    const lighting = getTimeOfDayLighting(useGameStore.getState().timeOfDay);
+    const lightGlow = useGameStore.getState().terrariumStats.light / 100;
+
+    if (ambRef.current) {
+      ambRef.current.color.set(lighting.ambientColor);
+      ambRef.current.intensity = lighting.ambientIntensity + lightGlow * 0.3;
+    }
+    if (dirRef.current) {
+      dirRef.current.color.set(lighting.dirColor);
+      dirRef.current.intensity = lighting.dirIntensity + lightGlow * 0.4;
+    }
+    if (ptRef.current) {
+      ptRef.current.intensity = lightGlow * 1.2 * lighting.dayness;
+    }
+  });
 
   return (
     <>
-      <ambientLight intensity={0.4 + lightGlow * 0.4} />
-      <directionalLight position={[5, 5, 5]} intensity={0.8 + lightGlow * 0.5} castShadow />
-      <pointLight position={[0, 2, 0]} intensity={lightGlow * 1.2} color="#ffe8a0" distance={5} />
+      <ambientLight ref={ambRef} />
+      <directionalLight ref={dirRef} position={[5, 5, 5]} castShadow />
+      <pointLight ref={ptRef} position={[0, 2, 0]} color="#ffe8a0" distance={5} />
+    </>
+  );
+}
+
+// ─── Main component ───────────────────────────────────────────────────────
+
+export default function DeskTerrarium() {
+  const { inventory, terrariumItems, placeItemInTerrarium } = useGameStore();
+  const [hoverItem, setHoverItem] = useState(null);
+  const [lidOn, setLidOn] = useState(false);
+
+  return (
+    <>
+      <TimeLights />
       <Environment preset="dawn" environmentRotation={[0, Math.PI * 0.75, 0]} />
 
-      {/* Desk surface */}
-      <mesh position={[0, -1.1, 0]} receiveShadow>
-        <boxGeometry args={[12, 0.15, 6]} />
-        <meshStandardMaterial color="#6b3f1e" roughness={1} flatShading />
-      </mesh>
+      <Desk />
 
-      {/* Books */}
-      {[[-3.5, '#c84b31'], [-3.1, '#2563eb'], [-2.7, '#16a34a']].map(([x, c], i) => (
-        <mesh key={i} position={[x, -0.75, -1.2]} rotation={[0, 0.08 * i, 0]}>
-          <boxGeometry args={[0.18, 0.6, 0.5]} />
-          <meshStandardMaterial color={c} roughness={1} flatShading />
-        </mesh>
-      ))}
+      <DeskBook position={[-3.5, -1.13, -1.2]} rotation={[0, 1.5, 0]} />
+      <DeskBook position={[-3.1, -1.13, -1.2]} rotation={[0, 1.6, 0]} />
+      <DeskBook position={[-2.7, -1.13, -1.2]} rotation={[0, 1.65, 0]} />
 
-      {/* Lid toggle button — sits in the HUD via Html */}
       <Html position={[0, 3.2, 0]} center>
         <button
           onClick={() => setLidOn(v => !v)}
@@ -177,7 +371,6 @@ export default function DeskTerrarium() {
         </button>
       </Html>
 
-      {/* Mason jar */}
       <MasonJar lidOn={lidOn}>
         {terrariumItems.map((item, i) => (
           <TerrariumItem key={item.placedAt} item={item} index={i} total={terrariumItems.length} />
@@ -197,7 +390,6 @@ export default function DeskTerrarium() {
         )}
       </MasonJar>
 
-      {/* Inventory cards */}
       {inventory.map((item, i) => {
         const total = inventory.length;
         const spacing = Math.min(1.2, 5 / Math.max(total, 1));
@@ -240,9 +432,9 @@ export default function DeskTerrarium() {
       })}
 
       <OrbitControls
-        minPolarAngle={Math.PI / 6}
-        maxPolarAngle={Math.PI / 2}
-        minDistance={4}
+        minPolarAngle={0}
+        maxPolarAngle={Math.PI}
+        minDistance={1}
         maxDistance={18}
         target={[0, 1.0, 0]}
       />

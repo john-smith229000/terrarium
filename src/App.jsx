@@ -1,9 +1,17 @@
-import { Canvas } from '@react-three/fiber';
+import { useFrame, Canvas } from '@react-three/fiber';
 import { useGameStore, forestKeys } from './store/useGameStore';
 import DeskTerrarium from './scenes/DeskTerrarium';
 import ForestLevel from './scenes/ForestLevel';
 import { MainMenuUI } from './scenes/MainMenu';
 import { PS1Effect } from './PS1Effect';
+
+// Ticks the global clock from terrarium scene (ForestLevel handles its own tick)
+function TerrariumTimeTicker() {
+  useFrame((_, delta) => {
+    useGameStore.getState().tickTime(delta);
+  });
+  return null;
+}
 
 function StatBar({ label, icon, value, color }) {
   return (
@@ -97,6 +105,25 @@ function ForestControls() {
   );
 }
 
+function ClockDisplay() {
+  const { timeOfDay } = useGameStore();
+  const hour   = Math.floor(timeOfDay) % 24;
+  const minute = Math.floor((timeOfDay % 1) * 60);
+  const ampm   = hour < 12 ? 'AM' : 'PM';
+  const h12    = hour % 12 === 0 ? 12 : hour % 12;
+  const timeStr = `${h12}:${String(minute).padStart(2, '0')} ${ampm}`;
+  const isNight = timeOfDay < 5 || timeOfDay > 21;
+  const isDawn  = timeOfDay >= 5 && timeOfDay < 8;
+  const isDusk  = timeOfDay >= 18 && timeOfDay <= 21;
+  const emoji   = isNight ? '🌙' : isDawn || isDusk ? '🌅' : '☀️';
+
+  return (
+    <span style={{ fontFamily: '"Courier New", monospace', fontSize: 10, color: 'rgba(134,239,172,0.5)', letterSpacing: '0.12em' }}>
+      {emoji} {timeStr}
+    </span>
+  );
+}
+
 export default function App() {
   const { currentScene, setScene, inventory, terrariumStats, terrariumItems } = useGameStore();
   const isMenu = currentScene === 'menu';
@@ -104,10 +131,8 @@ export default function App() {
   return (
     <div style={{ width: '100vw', height: '100vh', margin: 0, padding: 0, overflow: 'hidden', position: 'relative', backgroundColor: '#060d04' }}>
 
-      {/* ── Main Menu (pure HTML) ── */}
       {isMenu && <MainMenuUI />}
 
-      {/* ── HUD — shown in terrarium and forest ── */}
       {!isMenu && (
         <>
           {/* Top-left nav */}
@@ -120,6 +145,8 @@ export default function App() {
               <span style={{ fontFamily: '"Courier New", monospace', fontSize: 11, color: 'rgba(134,239,172,0.6)', letterSpacing: '0.15em', textTransform: 'uppercase' }}>
                 {currentScene === 'terrarium' ? '🫙 Desk' : '🌿 Forest'}
               </span>
+              <div style={{ width: 1, height: 16, background: 'rgba(255,255,255,0.08)' }} />
+              <ClockDisplay />
             </HudPanel>
 
             <div style={{ display: 'flex', gap: 8 }}>
@@ -170,12 +197,8 @@ export default function App() {
         </>
       )}
 
-      {/* ── Single persistent Canvas ── */}
+      {/* Single persistent Canvas */}
       <div style={{ position: 'absolute', inset: 0, zIndex: 0, visibility: isMenu ? 'hidden' : 'visible' }}>
-        {/*
-          imageRendering: pixelated ensures the browser doesn't smooth the
-          low-res canvas back out when it's displayed at full size
-        */}
         <Canvas
           gl={{ antialias: false, alpha: false }}
           shadows
@@ -183,11 +206,15 @@ export default function App() {
         >
           <color attach="background" args={['#060d04']} />
 
-          {/* PS1 low-res render pass — renders scene at ~15% res then upscales */}
-          {!isMenu && <PS1Effect resolution={0.25} />}
+          {!isMenu && <PS1Effect resolution={1} />}
 
-          {currentScene === 'terrarium' && <DeskTerrarium />}
-          {currentScene === 'forest'    && <ForestLevel />}
+          {currentScene === 'terrarium' && (
+            <>
+              <TerrariumTimeTicker />
+              <DeskTerrarium />
+            </>
+          )}
+          {currentScene === 'forest' && <ForestLevel />}
         </Canvas>
       </div>
 

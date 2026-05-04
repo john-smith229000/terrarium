@@ -1,20 +1,47 @@
 import { useState } from 'react';
 import { useGameStore } from '../store/useGameStore';
 
-// Pure HTML/CSS menu — no R3F camera fighting, no require() hacks
+// Dummy R3F mesh — keeps the scene valid
 export default function MainMenu() {
-  const { setScene } = useGameStore();
-
-  return (
-    <mesh visible={false}>
-      {/* Dummy mesh so R3F scene doesn't complain, actual UI is in App.jsx portal */}
-    </mesh>
-  );
+  return <mesh visible={false} />;
 }
 
-// Exported separately so App.jsx can render it outside the Canvas
+// ─── Main Menu UI (rendered outside Canvas in App.jsx) ────────────────────
+
 export function MainMenuUI() {
-  const { setScene } = useGameStore();
+  const { setScene, resetSave, timeOfDay, terrariumItems, inventory } = useGameStore();
+  const [showConfirmReset, setShowConfirmReset] = useState(false);
+  const [saveFlash, setSaveFlash] = useState(false);
+
+  const hasSave = terrariumItems.length > 0 || inventory.length > 0;
+
+  const handleReset = () => {
+    if (!showConfirmReset) {
+      setShowConfirmReset(true);
+      return;
+    }
+    resetSave();
+    setShowConfirmReset(false);
+  };
+
+  const handleSaveNow = () => {
+    useGameStore.getState().saveGame();
+    setSaveFlash(true);
+    setTimeout(() => setSaveFlash(false), 1200);
+  };
+
+  // Display current in-game time
+  const hour   = Math.floor(timeOfDay) % 24;
+  const minute = Math.floor((timeOfDay % 1) * 60);
+  const ampm   = hour < 12 ? 'AM' : 'PM';
+  const h12    = hour % 12 === 0 ? 12 : hour % 12;
+  const timeStr = `${h12}:${String(minute).padStart(2, '0')} ${ampm}`;
+
+  // Sky colour hint based on time
+  const isNight = timeOfDay < 5 || timeOfDay > 21;
+  const isDawn  = timeOfDay >= 5 && timeOfDay < 8;
+  const isDusk  = timeOfDay >= 18 && timeOfDay <= 21;
+  const skyEmoji = isNight ? '🌙' : isDawn || isDusk ? '🌅' : '☀️';
 
   return (
     <div style={{
@@ -24,7 +51,6 @@ export function MainMenuUI() {
       background: 'radial-gradient(ellipse at 50% 70%, #0d2208 0%, #060d04 60%, #020702 100%)',
       fontFamily: 'Georgia, serif',
     }}>
-      {/* Animated firefly particles */}
       <Fireflies />
 
       {/* Silhouette trees */}
@@ -41,6 +67,18 @@ export function MainMenuUI() {
           />
         ))}
       </svg>
+
+      {/* In-game clock */}
+      <div style={{
+        position: 'absolute', top: 20, right: 24,
+        fontFamily: '"Courier New", monospace',
+        fontSize: 12,
+        color: 'rgba(134,239,172,0.45)',
+        letterSpacing: '0.15em',
+        zIndex: 3,
+      }}>
+        {skyEmoji} {timeStr}
+      </div>
 
       {/* Title */}
       <div style={{
@@ -68,7 +106,7 @@ export function MainMenuUI() {
         a tiny living world
       </div>
 
-      {/* Buttons */}
+      {/* Nav buttons */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14, position: 'relative', zIndex: 2 }}>
         <MenuButton onClick={() => setScene('forest')} primary>
           🌿&nbsp;&nbsp;Enter the Forest
@@ -76,6 +114,70 @@ export function MainMenuUI() {
         <MenuButton onClick={() => setScene('terrarium')}>
           🫙&nbsp;&nbsp;View Your Terrarium
         </MenuButton>
+      </div>
+
+      {/* Save / Reset controls */}
+      <div style={{
+        position: 'relative', zIndex: 2,
+        marginTop: 40,
+        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10,
+      }}>
+        {/* Save now button */}
+        <button
+          onClick={handleSaveNow}
+          style={{
+            padding: '7px 22px',
+            background: saveFlash ? 'rgba(74,222,128,0.18)' : 'rgba(255,255,255,0.03)',
+            color: saveFlash ? '#86efac' : 'rgba(134,239,172,0.35)',
+            border: `1px solid ${saveFlash ? 'rgba(74,222,128,0.4)' : 'rgba(255,255,255,0.08)'}`,
+            borderRadius: 6,
+            cursor: 'pointer',
+            fontFamily: '"Courier New", monospace',
+            fontSize: 11,
+            letterSpacing: '0.1em',
+            transition: 'all 0.3s',
+          }}
+        >
+          {saveFlash ? '✓ Saved' : '💾 Save Now'}
+        </button>
+
+        {/* Reset save */}
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <button
+            onClick={handleReset}
+            style={{
+              padding: '6px 18px',
+              background: showConfirmReset ? 'rgba(239,68,68,0.12)' : 'transparent',
+              color: showConfirmReset ? '#fca5a5' : 'rgba(134,239,172,0.2)',
+              border: `1px solid ${showConfirmReset ? 'rgba(239,68,68,0.3)' : 'rgba(255,255,255,0.06)'}`,
+              borderRadius: 6,
+              cursor: 'pointer',
+              fontFamily: '"Courier New", monospace',
+              fontSize: 11,
+              letterSpacing: '0.1em',
+              transition: 'all 0.2s',
+            }}
+          >
+            {showConfirmReset ? '⚠️ Confirm Reset?' : '🗑 Reset Save'}
+          </button>
+          {showConfirmReset && (
+            <button
+              onClick={() => setShowConfirmReset(false)}
+              style={{
+                padding: '6px 12px',
+                background: 'transparent',
+                color: 'rgba(134,239,172,0.4)',
+                border: '1px solid rgba(255,255,255,0.08)',
+                borderRadius: 6,
+                cursor: 'pointer',
+                fontFamily: '"Courier New", monospace',
+                fontSize: 11,
+              }}
+            >
+              Cancel
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Footer */}
@@ -127,19 +229,18 @@ function MenuButton({ children, onClick, primary }) {
 function Fireflies() {
   const flies = Array.from({ length: 18 }, (_, i) => ({
     id: i,
-    left: `${5 + Math.random() * 90}%`,
-    top: `${10 + Math.random() * 70}%`,
-    delay: `${Math.random() * 4}s`,
-    duration: `${3 + Math.random() * 3}s`,
+    left: `${5 + (i * 37.3) % 90}%`,
+    top: `${10 + (i * 29.7) % 70}%`,
+    delay: `${(i * 0.7) % 4}s`,
+    duration: `${3 + (i * 0.4) % 3}s`,
+    dx: i % 2 === 0 ? '+8px' : '-8px',
   }));
 
   return (
     <>
       <style>{`
-        @keyframes firefly {
-          0%, 100% { opacity: 0; transform: translate(0,0) scale(0.8); }
-          50% { opacity: 0.85; transform: translate(${Math.random() > 0.5 ? '+' : '-'}8px, -10px) scale(1.2); }
-        }
+        @keyframes ff0 { 0%,100%{opacity:0;transform:translate(0,0) scale(0.8)} 50%{opacity:0.85;transform:translate(8px,-10px) scale(1.2)} }
+        @keyframes ff1 { 0%,100%{opacity:0;transform:translate(0,0) scale(0.8)} 50%{opacity:0.85;transform:translate(-8px,-10px) scale(1.2)} }
       `}</style>
       {flies.map(f => (
         <div key={f.id} style={{
@@ -149,7 +250,7 @@ function Fireflies() {
           borderRadius: '50%',
           background: '#a3e635',
           boxShadow: '0 0 6px 2px rgba(163,230,53,0.6)',
-          animation: `firefly ${f.duration} ${f.delay} infinite ease-in-out`,
+          animation: `${f.id % 2 === 0 ? 'ff0' : 'ff1'} ${f.duration} ${f.delay} infinite ease-in-out`,
           zIndex: 1,
         }} />
       ))}
